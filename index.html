@@ -58,6 +58,17 @@
   <div class="row">Pop out <input id="popOut" type="range" min="0" max="0.8" step="0.05" value="0.3"></div>
   <div class="row">Size <input id="size" type="range" min="0.02" max="0.15" step="0.005" value="0.06"></div>
   <div class="row"><label><input id="spinObjs" type="checkbox" checked> Rotate objects</label></div>
+  <div class="row">
+    <label><input id="pulse" type="checkbox" checked> Pulse</label>
+    <label><input id="pulseGlow" type="checkbox" checked> Glow</label>
+    <select id="pulseMode">
+      <option value="ripple" selected>Ripple</option>
+      <option value="random">Random</option>
+      <option value="together">Together</option>
+    </select>
+  </div>
+  <div class="row">Pulse speed <input id="pulseSpd" type="range" min="0.1" max="3" step="0.05" value="0.8"></div>
+  <div class="row">Pulse amount <input id="pulseAmt" type="range" min="0" max="0.6" step="0.01" value="0.2"></div>
   <details id="lighting">
   <summary class="section">Lighting</summary>
   <div class="row">Ambient <input id="ambient" type="range" min="0" max="2" step="0.05" value="0.5"></div>
@@ -142,6 +153,8 @@ function makeFloaters() {
     m.userData = { u: rand() - 0.5, v: (rand() - 0.5) * 0.8, z: -D * 0.95 + rand() * (D * 0.95 + pop),
       spin: new THREE.Vector3(rand() - 0.5, rand() - 0.5, rand() - 0.5).multiplyScalar(1.5) };
     m.rotation.set(rand() * 6, rand() * 6, rand() * 6);
+    // Golden-angle phase rather than rand(), so adding pulsing doesn't change the layout
+    m.userData.phase = (i * 2.39996) % (Math.PI * 2);
     floaters.add(m);
   }
   seed = s0;   // same layout until Shuffle is pressed
@@ -383,6 +396,21 @@ function updateCamera() {
   camera.projectionMatrixInverse.copy(camera.projectionMatrix).invert();
 }
 
+// ---- Pulsing: objects swell and (optionally) glow on a sine wave ----
+function updatePulse(t) {
+  const on = $('pulse').checked, glow = $('pulseGlow').checked, mode = $('pulseMode').value;
+  const amt = on ? +$('pulseAmt').value : 0, w = +$('pulseSpd').value * Math.PI * 2;
+  for (const m of floaters.children) {
+    const u = m.userData;
+    // ripple: a wave travelling from the back wall forwards; random: own phase; together: in sync
+    const phase = mode === 'ripple' ? u.z * 3 : mode === 'random' ? u.phase : 0;
+    const p = Math.sin(t * w - phase);
+    m.scale.setScalar(1 + amt * p);
+    if (m.material.emissive)
+      m.material.emissive.copy(m.material.color).multiplyScalar(glow ? Math.max(0, p) * amt * 2.5 : 0);
+  }
+}
+
 const clock = new THREE.Clock();
 renderer.setAnimationLoop(() => {
   const dt = clock.getDelta();
@@ -394,6 +422,7 @@ renderer.setAnimationLoop(() => {
       const s = m.userData.spin;
       m.rotation.x += s.x * dt; m.rotation.y += s.y * dt; m.rotation.z += s.z * dt;
     }
+  updatePulse(clock.elapsedTime);
   renderer.render(scene, camera);
 });
 

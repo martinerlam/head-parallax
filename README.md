@@ -45,6 +45,9 @@ check System Settings → Privacy & Security → Camera.
 | Shape, Solid / Wireframe | Spheres, cubes, rings or discs, lit or as outlines |
 | Gloss, Count, Pop out, Size | Object finish, number, how far they come forward, size |
 | Shuffle | New random layout |
+| Pulse, Glow | Objects swell and shrink, and light up as they swell |
+| Ripple / Random / Together | Pulse as a wave from back to front, each on its own beat, or all in sync |
+| Pulse speed, Pulse amount | How fast and how big the pulse is |
 | Lighting (dropdown) | Ambient, key light strength/direction/height/warmth, room tone, shadows, head lamp, coloured rim lights |
 | H key | Hide the panel |
 
