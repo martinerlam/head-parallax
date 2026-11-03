@@ -62,10 +62,9 @@
   <div class="row">Count <input id="count" type="range" min="0" max="60" step="1" value="16"></div>
   <div class="row">Pop out <input id="popOut" type="range" min="0" max="0.8" step="0.05" value="0.3"></div>
   <div class="row">Size <input id="size" type="range" min="0.02" max="0.15" step="0.005" value="0.06"></div>
-  <div class="row"><label><input id="spinObjs" type="checkbox" checked> Rotate objects</label></div>
   <div class="row">
-    <label><input id="pulse" type="checkbox" checked> Pulse</label>
-    <label><input id="pulseGlow" type="checkbox" checked> Glow</label>
+    <label><input id="pulse" type="checkbox"> Pulse</label>
+    <label><input id="pulseGlow" type="checkbox"> Glow</label>
     <select id="pulseMode">
       <option value="ripple" selected>Ripple</option>
       <option value="random">Random</option>
@@ -156,8 +155,7 @@ function makeFloaters() {
         new THREE.LineBasicMaterial({ color }));
       g.dispose();
     }
-    m.userData = { u: rand() - 0.5, v: (rand() - 0.5) * 0.8, zf: rand(),
-      spin: new THREE.Vector3(rand() - 0.5, rand() - 0.5, rand() - 0.5).multiplyScalar(1.5) };
+    m.userData = { u: rand() - 0.5, v: (rand() - 0.5) * 0.8, zf: rand() };
     m.rotation.set(rand() * 6, rand() * 6, rand() * 6);
     // Golden-angle phase rather than rand(), so adding pulsing doesn't change the layout
     m.userData.phase = (i * 2.39996) % (Math.PI * 2);
@@ -442,15 +440,10 @@ function updatePulse(t) {
 
 const clock = new THREE.Clock();
 renderer.setAnimationLoop(() => {
-  const dt = clock.getDelta();
+  clock.getDelta();   // advances clock.elapsedTime for the pulse
   track();
   updateCamera();
   updateLights();
-  if ($('spinObjs').checked)
-    for (const m of floaters.children) {
-      const s = m.userData.spin;
-      m.rotation.x += s.x * dt; m.rotation.y += s.y * dt; m.rotation.z += s.z * dt;
-    }
   updatePulse(clock.elapsedTime);
   renderer.render(scene, camera);
 });
