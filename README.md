@@ -42,6 +42,8 @@ check System Settings → Privacy & Security → Camera.
 | Camera | Retry the camera, or show/hide the webcam preview |
 | Recenter | Make your current head position the neutral one |
 | Back image | Show or hide the back-wall picture |
+| Room width / height / depth | Proportions of the space. Below 1 the room is a box inside the screen; above 1 it's bigger than the window and you see more of it as you move |
+| Reset room | Back to screen-sized width and height, depth 2 |
 | Shape, Solid / Wireframe | Spheres, cubes, rings or discs, lit or as outlines |
 | Gloss, Count, Pop out, Size | Object finish, number, how far they come forward, size |
 | Shuffle | New random layout |

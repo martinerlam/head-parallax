@@ -39,6 +39,11 @@
     <button id="recenter">Recenter</button>
   </div>
   <div class="row"><label><input id="showImg" type="checkbox" checked> Back image</label></div>
+  <div class="section">Room</div>
+  <div class="row">Width <input id="roomW" type="range" min="0.4" max="3" step="0.05" value="1"></div>
+  <div class="row">Height <input id="roomH" type="range" min="0.4" max="3" step="0.05" value="1"></div>
+  <div class="row">Depth <input id="roomD" type="range" min="0.4" max="6" step="0.1" value="2"></div>
+  <div class="row"><button id="roomReset">Reset room</button></div>
   <div class="section">Foreground objects</div>
   <div class="row">
     <select id="shape">
@@ -106,7 +111,9 @@ camera.matrixAutoUpdate = true;
 
 const H = 1;            // screen height in world units
 let W = innerWidth / Math.max(innerHeight, 1);
-const D = 2.0;          // room depth
+// Room behind the window: RW x RH x D. The opening is the screen (W x H); the room
+// can be wider, taller or narrower than that, which you see as you look around.
+let RW = W, RH = H, D = 2.0;
 const room = new THREE.Group();
 scene.add(room);
 
@@ -130,7 +137,7 @@ function makeFloaters() {
   for (const m of floaters.children) { m.geometry.dispose(); m.material.dispose(); }
   floaters.clear();
   const shape = $('shape').value, count = +$('count').value;
-  const size = +$('size').value, pop = +$('popOut').value;
+  const size = +$('size').value;
   const s0 = seed;
   const solid = $('style').value === 'solid', rough = 1 - +$('gloss').value;
   for (let i = 0; i < count; i++) {
@@ -149,8 +156,7 @@ function makeFloaters() {
         new THREE.LineBasicMaterial({ color }));
       g.dispose();
     }
-    // Spread from the back wall to "pop" units in front of the screen
-    m.userData = { u: rand() - 0.5, v: (rand() - 0.5) * 0.8, z: -D * 0.95 + rand() * (D * 0.95 + pop),
+    m.userData = { u: rand() - 0.5, v: (rand() - 0.5) * 0.8, zf: rand(),
       spin: new THREE.Vector3(rand() - 0.5, rand() - 0.5, rand() - 0.5).multiplyScalar(1.5) };
     m.rotation.set(rand() * 6, rand() * 6, rand() * 6);
     // Golden-angle phase rather than rand(), so adding pulsing doesn't change the layout
@@ -162,10 +168,17 @@ function makeFloaters() {
 }
 
 function placeFloaters() {
-  for (const m of floaters.children) m.position.set(m.userData.u * W * 0.85, m.userData.v * H, m.userData.z);
+  // Spread from the back wall to "Pop out" units in front of the screen
+  const pop = +$('popOut').value;
+  for (const m of floaters.children) {
+    const u = m.userData;
+    u.z = -D * 0.95 + u.zf * (D * 0.95 + pop);
+    m.position.set(u.u * RW * 0.85, u.v * RH, u.z);
+  }
 }
 
-for (const id of ['shape', 'style', 'count', 'size', 'popOut']) $(id).addEventListener('input', makeFloaters);
+for (const id of ['shape', 'style', 'count', 'size']) $(id).addEventListener('input', makeFloaters);
+$('popOut').addEventListener('input', placeFloaters);
 $('gloss').addEventListener('input', () => {
   for (const m of floaters.children) if (m.material.roughness !== undefined) m.material.roughness = 1 - +$('gloss').value;
 });
@@ -182,8 +195,7 @@ key.castShadow = true;
 key.shadow.mapSize.set(2048, 2048);
 key.shadow.bias = -0.0005;
 key.shadow.normalBias = 0.01;
-Object.assign(key.shadow.camera, { left: -2.5, right: 2.5, top: 2.5, bottom: -2.5, near: 0.1, far: 12 });
-key.target.position.set(0, 0, -D / 2);
+Object.assign(key.shadow.camera, { near: 0.1, far: 30 });
 scene.add(key, key.target);
 
 // Lamp at the viewer's eye: highlights slide across objects as you move
@@ -211,13 +223,18 @@ function buildCatchers() {
     catchers.add(p);
   };
   const e = 0.003;   // sit just behind the grid lines to avoid flicker
-  add(W, D, [0, -H / 2 - e, -D / 2], [-Math.PI / 2, 0, 0]);      // floor
-  add(W, H, [0, 0, -D + 0.002], [0, 0, 0], shadowMat);          // over the back image
-  add(D, H, [-W / 2 - e, 0, -D / 2], [0, Math.PI / 2, 0]);      // left
-  add(D, H, [W / 2 + e, 0, -D / 2], [0, -Math.PI / 2, 0]);      // right
-  add(W, D, [0, H / 2 + e, -D / 2], [Math.PI / 2, 0, 0]);       // ceiling
-  rimA.position.set(-W / 2 + 0.05, 0.3, -0.4);
-  rimB.position.set(W / 2 - 0.05, -0.2, -1.4);
+  add(RW, D, [0, -RH / 2 - e, -D / 2], [-Math.PI / 2, 0, 0]);   // floor
+  add(RW, RH, [0, 0, -D + 0.002], [0, 0, 0], shadowMat);        // over the back image
+  add(D, RH, [-RW / 2 - e, 0, -D / 2], [0, Math.PI / 2, 0]);    // left
+  add(D, RH, [RW / 2 + e, 0, -D / 2], [0, -Math.PI / 2, 0]);    // right
+  add(RW, D, [0, RH / 2 + e, -D / 2], [Math.PI / 2, 0, 0]);     // ceiling
+  rimA.position.set(-RW / 2 + 0.05, 0.3 * RH, -0.2 * D);
+  rimB.position.set(RW / 2 - 0.05, -0.2 * RH, -0.7 * D);
+  // Shadow camera has to cover the whole room
+  const r = Math.max(RW, RH, D) * 1.2;
+  Object.assign(key.shadow.camera, { left: -r, right: r, top: r, bottom: -r });
+  key.shadow.camera.updateProjectionMatrix();
+  key.target.position.set(0, 0, -D / 2);
 }
 
 const warm = new THREE.Color(0xffc58a), cool = new THREE.Color(0x9cc4ff), white = new THREE.Color(0xffffff);
@@ -226,7 +243,8 @@ function updateLights() {
   key.intensity = +$('keyI').value;
   const az = THREE.MathUtils.degToRad(+$('keyAz').value), el = THREE.MathUtils.degToRad(+$('keyEl').value);
   // Azimuth 0 = light from the viewer's side; key sits above and in front of the room
-  key.position.set(Math.sin(az) * Math.cos(el) * 4, Math.sin(el) * 4, -D / 2 + Math.cos(az) * Math.cos(el) * 4);
+  const kr = Math.max(4, D * 1.5);
+  key.position.set(Math.sin(az) * Math.cos(el) * kr, Math.sin(el) * kr, -D / 2 + Math.cos(az) * Math.cos(el) * kr);
   const w = +$('keyWarm').value;
   key.color.copy(white).lerp(w > 0 ? warm : cool, Math.abs(w));
   shadowMat.opacity = +$('shadowAmt').value;
@@ -241,21 +259,28 @@ $('showImg').onchange = e => back.visible = e.target.checked;
 
 function buildRoom() {
   W = innerWidth / Math.max(innerHeight, 1);
-  back.scale.set(W, H, 1);
+  RW = W * +$('roomW').value; RH = H * +$('roomH').value; D = +$('roomD').value;
+  back.scale.set(RW, RH, 1);
   fitTexture();
   back.position.z = -D;
   if (grid) { room.remove(grid); grid.geometry.dispose(); }
   const pts = [];
-  const x0 = -W / 2, x1 = W / 2, y0 = -H / 2, y1 = H / 2;
+  const x0 = -RW / 2, x1 = RW / 2, y0 = -RH / 2, y1 = RH / 2;
+  // Keep grid cells roughly the same size whatever the proportions
+  const nx = Math.max(2, Math.round(RW / 0.18)), ny = Math.max(2, Math.round(RH / 0.1)), nz = Math.max(2, Math.round(D / 0.2));
   // depth rings
-  for (let i = 0; i <= 10; i++) {
-    const z = -D * i / 10;
+  for (let i = 0; i <= nz; i++) {
+    const z = -D * i / nz;
     pts.push(x0,y0,z, x1,y0,z,  x1,y0,z, x1,y1,z,  x1,y1,z, x0,y1,z,  x0,y1,z, x0,y0,z);
   }
   // lines running into the distance
-  for (let i = 0; i <= 10; i++) {
-    const x = x0 + (x1 - x0) * i / 10, y = y0 + (y1 - y0) * i / 10;
-    pts.push(x,y0,0, x,y0,-D,  x,y1,0, x,y1,-D,  x0,y,0, x0,y,-D,  x1,y,0, x1,y,-D);
+  for (let i = 0; i <= nx; i++) {
+    const x = x0 + (x1 - x0) * i / nx;
+    pts.push(x,y0,0, x,y0,-D,  x,y1,0, x,y1,-D);
+  }
+  for (let i = 0; i <= ny; i++) {
+    const y = y0 + (y1 - y0) * i / ny;
+    pts.push(x0,y,0, x0,y,-D,  x1,y,0, x1,y,-D);
   }
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
@@ -266,6 +291,10 @@ function buildRoom() {
   renderer.setSize(innerWidth, innerHeight);
 }
 addEventListener('resize', buildRoom);
+for (const id of ['roomW', 'roomH', 'roomD']) $(id).addEventListener('input', buildRoom);
+$('roomReset').onclick = () => {
+  $('roomW').value = 1; $('roomH').value = 1; $('roomD').value = 2; buildRoom();
+};
 buildRoom();
 makeFloaters();
 
@@ -273,7 +302,7 @@ makeFloaters();
 function fitTexture() {
   const t = backMat.map, img = t && t.image;
   if (!img || !img.width) return;
-  const imgAspect = img.width / img.height, wallAspect = W / H;
+  const imgAspect = img.width / img.height, wallAspect = RW / RH;
   if (imgAspect > wallAspect) { t.repeat.set(wallAspect / imgAspect, 1); t.offset.set((1 - t.repeat.x) / 2, 0); }
   else { t.repeat.set(1, imgAspect / wallAspect); t.offset.set(0, (1 - t.repeat.y) / 2); }
 }
