@@ -1,0 +1,403 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Head Parallax</title>
+<style>
+  :root { --bg: #000; --fg: #eee; --muted: #999; --panel: rgba(20,20,24,.75); }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg);
+    font: 13px/1.4 system-ui, -apple-system, sans-serif; overflow: hidden; }
+  canvas { display: block; }
+  #hud { position: fixed; left: 12px; top: 12px; padding: 10px 12px; border-radius: 8px;
+    background: var(--panel); max-width: 280px; }
+  #hud b { font-weight: 600; }
+  #hud .row { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
+  #hud input[type=range] { flex: 1; }
+  #hud button, #hud label.btn { background: #333; color: var(--fg); border: 1px solid #555;
+    border-radius: 6px; padding: 4px 8px; cursor: pointer; font: inherit; }
+  #status { color: var(--muted); }
+  #hud .section { margin-top: 12px; font-weight: 600; color: var(--muted);
+    text-transform: uppercase; font-size: 11px; letter-spacing: .05em; }
+  #hud select { background: #333; color: var(--fg); border: 1px solid #555; border-radius: 6px;
+    padding: 3px 6px; font: inherit; flex: 1; }
+  #hud { width: 280px; max-height: calc(100vh - 24px); overflow-y: auto; overflow-x: hidden; box-sizing: border-box; }
+  #hud select { min-width: 0; }
+  #hud summary { cursor: pointer; list-style: revert; }
+  #video { position: fixed; right: 12px; bottom: 12px; width: 160px; border-radius: 8px;
+    transform: scaleX(-1); opacity: .8; }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<div id="hud">
+  <b>Head Parallax</b> <span id="status">starting camera…</span>
+  <div class="row">Sensitivity <input id="sens" type="range" min="0.25" max="1.5" step="0.05" value="1"></div>
+  <div class="row">
+    <label class="btn">Use my image<input id="file" type="file" accept="image/*" hidden></label>
+    <button id="toggleVid">Camera</button>
+    <button id="recenter">Recenter</button>
+  </div>
+  <div class="row"><label><input id="showImg" type="checkbox" checked> Back image</label></div>
+  <div class="section">Foreground objects</div>
+  <div class="row">
+    <select id="shape">
+      <option value="sphere" selected>Spheres</option>
+      <option value="cube">Cubes</option>
+      <option value="ring">Rings</option>
+      <option value="disc">Discs</option>
+    </select>
+    <select id="style">
+      <option value="solid" selected>Solid</option>
+      <option value="wire">Wireframe</option>
+    </select>
+    <button id="shuffle">Shuffle</button>
+  </div>
+  <div class="row">Gloss <input id="gloss" type="range" min="0" max="1" step="0.05" value="0.6"></div>
+  <div class="row">Count <input id="count" type="range" min="0" max="60" step="1" value="16"></div>
+  <div class="row">Pop out <input id="popOut" type="range" min="0" max="0.8" step="0.05" value="0.3"></div>
+  <div class="row">Size <input id="size" type="range" min="0.02" max="0.15" step="0.005" value="0.06"></div>
+  <div class="row"><label><input id="spinObjs" type="checkbox" checked> Rotate objects</label></div>
+  <details id="lighting">
+  <summary class="section">Lighting</summary>
+  <div class="row">Ambient <input id="ambient" type="range" min="0" max="2" step="0.05" value="0.5"></div>
+  <div class="row">Key light <input id="keyI" type="range" min="0" max="5" step="0.1" value="2.5"></div>
+  <div class="row">Direction <input id="keyAz" type="range" min="-180" max="180" step="1" value="-35"></div>
+  <div class="row">Height <input id="keyEl" type="range" min="5" max="90" step="1" value="55"></div>
+  <div class="row">Warmth <input id="keyWarm" type="range" min="-1" max="1" step="0.05" value="0.2"></div>
+  <div class="row">Room tone <input id="roomTone" type="range" min="0" max="0.6" step="0.01" value="0.12"></div>
+  <div class="row">Shadows <input id="shadowAmt" type="range" min="0" max="1" step="0.05" value="0.45"></div>
+  <div class="row">Head lamp <input id="headI" type="range" min="0" max="3" step="0.05" value="0.6"></div>
+  <div class="row"><label><input id="rim" type="checkbox" checked> Coloured rim lights</label></div>
+  </details>
+  <div class="row" style="color:var(--muted)">H hides this panel. Drop an image anywhere.</div>
+</div>
+<video id="video" autoplay playsinline muted></video>
+
+<script type="importmap">
+{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" } }
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { FaceLandmarker, FilesetResolver } from 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs';
+
+const $ = id => document.getElementById(id);
+const statusEl = $('status'), video = $('video');
+
+// ---- Scene: the screen is a window at z=0, the "room" extends behind it ----
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(devicePixelRatio);
+document.body.prepend(renderer.domElement);
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera();
+camera.matrixAutoUpdate = true;
+
+const H = 1;            // screen height in world units
+let W = innerWidth / Math.max(innerHeight, 1);
+const D = 2.0;          // room depth
+const room = new THREE.Group();
+scene.add(room);
+
+const backMat = new THREE.MeshBasicMaterial({ map: makeDefaultTexture() });
+const back = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), backMat);
+room.add(back);
+
+const gridMat = new THREE.LineBasicMaterial({ color: 0x3fa9f5, transparent: true, opacity: 0.55 });
+let grid;
+
+// ---- Foreground objects scattered through the room ----
+const floaters = new THREE.Group();
+room.add(floaters);
+// Colours sampled from the Renderheads logo
+const palette = [0xd2232a, 0xf57b03, 0xfcc93a, 0xee2b7b, 0xa01d63, 0x01aeea,
+  0x04c5b5, 0x03a9b9, 0x419aab, 0x169673];
+let seed = 1;
+const rand = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+
+function makeFloaters() {
+  for (const m of floaters.children) { m.geometry.dispose(); m.material.dispose(); }
+  floaters.clear();
+  const shape = $('shape').value, count = +$('count').value;
+  const size = +$('size').value, pop = +$('popOut').value;
+  const s0 = seed;
+  const solid = $('style').value === 'solid', rough = 1 - +$('gloss').value;
+  for (let i = 0; i < count; i++) {
+    const color = palette[i % palette.length];
+    const g = shape === 'disc' ? new THREE.CircleGeometry(size, 48)
+      : shape === 'ring' ? new THREE.TorusGeometry(size, size * 0.25, solid ? 24 : 8, 48)
+      : shape === 'cube' ? new THREE.BoxGeometry(size * 1.6, size * 1.6, size * 1.6)
+      : new THREE.SphereGeometry(size, solid ? 48 : 12, solid ? 32 : 8);
+    let m;
+    if (solid) {
+      m = new THREE.Mesh(g, new THREE.MeshStandardMaterial({ color, roughness: rough, metalness: 0.05,
+        side: shape === 'disc' ? THREE.DoubleSide : THREE.FrontSide }));
+      m.castShadow = true;
+    } else {
+      m = new THREE.LineSegments(shape === 'sphere' ? new THREE.WireframeGeometry(g) : new THREE.EdgesGeometry(g),
+        new THREE.LineBasicMaterial({ color }));
+      g.dispose();
+    }
+    // Spread from the back wall to "pop" units in front of the screen
+    m.userData = { u: rand() - 0.5, v: (rand() - 0.5) * 0.8, z: -D * 0.95 + rand() * (D * 0.95 + pop),
+      spin: new THREE.Vector3(rand() - 0.5, rand() - 0.5, rand() - 0.5).multiplyScalar(1.5) };
+    m.rotation.set(rand() * 6, rand() * 6, rand() * 6);
+    floaters.add(m);
+  }
+  seed = s0;   // same layout until Shuffle is pressed
+  placeFloaters();
+}
+
+function placeFloaters() {
+  for (const m of floaters.children) m.position.set(m.userData.u * W * 0.85, m.userData.v * H, m.userData.z);
+}
+
+for (const id of ['shape', 'style', 'count', 'size', 'popOut']) $(id).addEventListener('input', makeFloaters);
+$('gloss').addEventListener('input', () => {
+  for (const m of floaters.children) if (m.material.roughness !== undefined) m.material.roughness = 1 - +$('gloss').value;
+});
+
+// ---- Lighting ----
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+const ambient = new THREE.HemisphereLight(0xdde8ff, 0x332222, 0.5);
+scene.add(ambient);
+
+const key = new THREE.DirectionalLight(0xffffff, 2.5);
+key.castShadow = true;
+key.shadow.mapSize.set(2048, 2048);
+key.shadow.bias = -0.0005;
+key.shadow.normalBias = 0.01;
+Object.assign(key.shadow.camera, { left: -2.5, right: 2.5, top: 2.5, bottom: -2.5, near: 0.1, far: 12 });
+key.target.position.set(0, 0, -D / 2);
+scene.add(key, key.target);
+
+// Lamp at the viewer's eye: highlights slide across objects as you move
+const headLamp = new THREE.PointLight(0xffffff, 0.6, 0, 1.5);
+scene.add(headLamp);
+
+// Two coloured fills from the sides, taken from the palette
+const rimA = new THREE.PointLight(0xee2b7b, 1.2, 0, 1.5);
+const rimB = new THREE.PointLight(0x01aeea, 1.2, 0, 1.5);
+scene.add(rimA, rimB);
+
+// Dark lit surfaces for the room so light pools and shadows show up; the back image
+// gets an invisible shadow-only layer instead so the picture keeps its colours.
+const shadowMat = new THREE.ShadowMaterial({ opacity: 0.45 });
+const wallMat = new THREE.MeshStandardMaterial({ color: 0x14161c, roughness: 0.85 });
+const catchers = new THREE.Group();
+room.add(catchers);
+
+function buildCatchers() {
+  for (const c of catchers.children) c.geometry.dispose();
+  catchers.clear();
+  const add = (w, h, pos, rot, mat = wallMat) => {
+    const p = new THREE.Mesh(new THREE.PlaneGeometry(w, h), mat);
+    p.position.set(...pos); p.rotation.set(...rot); p.receiveShadow = true;
+    catchers.add(p);
+  };
+  const e = 0.003;   // sit just behind the grid lines to avoid flicker
+  add(W, D, [0, -H / 2 - e, -D / 2], [-Math.PI / 2, 0, 0]);      // floor
+  add(W, H, [0, 0, -D + 0.002], [0, 0, 0], shadowMat);          // over the back image
+  add(D, H, [-W / 2 - e, 0, -D / 2], [0, Math.PI / 2, 0]);      // left
+  add(D, H, [W / 2 + e, 0, -D / 2], [0, -Math.PI / 2, 0]);      // right
+  add(W, D, [0, H / 2 + e, -D / 2], [Math.PI / 2, 0, 0]);       // ceiling
+  rimA.position.set(-W / 2 + 0.05, 0.3, -0.4);
+  rimB.position.set(W / 2 - 0.05, -0.2, -1.4);
+}
+
+const warm = new THREE.Color(0xffc58a), cool = new THREE.Color(0x9cc4ff), white = new THREE.Color(0xffffff);
+function updateLights() {
+  ambient.intensity = +$('ambient').value;
+  key.intensity = +$('keyI').value;
+  const az = THREE.MathUtils.degToRad(+$('keyAz').value), el = THREE.MathUtils.degToRad(+$('keyEl').value);
+  // Azimuth 0 = light from the viewer's side; key sits above and in front of the room
+  key.position.set(Math.sin(az) * Math.cos(el) * 4, Math.sin(el) * 4, -D / 2 + Math.cos(az) * Math.cos(el) * 4);
+  const w = +$('keyWarm').value;
+  key.color.copy(white).lerp(w > 0 ? warm : cool, Math.abs(w));
+  shadowMat.opacity = +$('shadowAmt').value;
+  wallMat.color.setScalar(+$('roomTone').value);
+  key.castShadow = shadowMat.opacity > 0;
+  headLamp.intensity = +$('headI').value;
+  headLamp.position.copy(camera.position);
+  rimA.visible = rimB.visible = $('rim').checked;
+}
+$('shuffle').onclick = () => { seed = (seed * 48271 + 7) % 2147483647 || 1; makeFloaters(); };
+$('showImg').onchange = e => back.visible = e.target.checked;
+
+function buildRoom() {
+  W = innerWidth / Math.max(innerHeight, 1);
+  back.scale.set(W, H, 1);
+  fitTexture();
+  back.position.z = -D;
+  if (grid) { room.remove(grid); grid.geometry.dispose(); }
+  const pts = [];
+  const x0 = -W / 2, x1 = W / 2, y0 = -H / 2, y1 = H / 2;
+  // depth rings
+  for (let i = 0; i <= 10; i++) {
+    const z = -D * i / 10;
+    pts.push(x0,y0,z, x1,y0,z,  x1,y0,z, x1,y1,z,  x1,y1,z, x0,y1,z,  x0,y1,z, x0,y0,z);
+  }
+  // lines running into the distance
+  for (let i = 0; i <= 10; i++) {
+    const x = x0 + (x1 - x0) * i / 10, y = y0 + (y1 - y0) * i / 10;
+    pts.push(x,y0,0, x,y0,-D,  x,y1,0, x,y1,-D,  x0,y,0, x0,y,-D,  x1,y,0, x1,y,-D);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+  grid = new THREE.LineSegments(g, gridMat);
+  room.add(grid);
+  placeFloaters();
+  buildCatchers();
+  renderer.setSize(innerWidth, innerHeight);
+}
+addEventListener('resize', buildRoom);
+buildRoom();
+makeFloaters();
+
+// Crop the back-wall image to fill the window without stretching
+function fitTexture() {
+  const t = backMat.map, img = t && t.image;
+  if (!img || !img.width) return;
+  const imgAspect = img.width / img.height, wallAspect = W / H;
+  if (imgAspect > wallAspect) { t.repeat.set(wallAspect / imgAspect, 1); t.offset.set((1 - t.repeat.x) / 2, 0); }
+  else { t.repeat.set(1, imgAspect / wallAspect); t.offset.set(0, (1 - t.repeat.y) / 2); }
+}
+
+function makeDefaultTexture() {
+  const c = document.createElement('canvas'); c.width = 1600; c.height = 900;
+  const g = c.getContext('2d');
+  const sky = g.createLinearGradient(0, 0, 0, 900);
+  sky.addColorStop(0, '#1b1f4b'); sky.addColorStop(0.55, '#e0607e'); sky.addColorStop(1, '#ffb36b');
+  g.fillStyle = sky; g.fillRect(0, 0, 1600, 900);
+  g.fillStyle = '#ffe9a8'; g.beginPath(); g.arc(800, 560, 120, 0, Math.PI * 2); g.fill();
+  const ridge = (base, amp, color, seed) => {
+    g.fillStyle = color; g.beginPath(); g.moveTo(0, 900);
+    for (let x = 0; x <= 1600; x += 20)
+      g.lineTo(x, base - amp * (Math.sin(x * 0.004 + seed) * 0.6 + Math.sin(x * 0.011 + seed * 2) * 0.4));
+    g.lineTo(1600, 900); g.fill();
+  };
+  ridge(640, 90, '#7a3b69', 1); ridge(720, 70, '#4a2550', 3); ridge(820, 50, '#22142e', 5);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
+}
+
+function setImage(file) {
+  if (!file || !file.type.startsWith('image/')) return;
+  const url = URL.createObjectURL(file);
+  new THREE.TextureLoader().load(url, t => {
+    t.colorSpace = THREE.SRGBColorSpace;
+    backMat.map.dispose(); backMat.map = t; backMat.needsUpdate = true; fitTexture();
+  });
+}
+$('file').onchange = e => setImage(e.target.files[0]);
+addEventListener('dragover', e => e.preventDefault());
+addEventListener('drop', e => { e.preventDefault(); setImage(e.dataTransfer.files[0]); });
+
+// ---- Head tracking ----
+const head = { x: 0, y: 0, z: 2.2 };     // eye position in world units, smoothed
+const target = { x: 0, y: 0, z: 2.2 };
+let refEyeDist = null, center = { x: 0.5, y: 0.5 };
+let raw = null, landmarker = null, lastVideoTime = -1, usingMouse = false;
+
+async function initTracking() {
+  if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
+    useMouse('camera needs http://localhost — see README'); return;
+  }
+  try {
+    statusEl.textContent = 'starting camera…';
+    const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480, facingMode: 'user' } });
+    video.srcObject = stream;
+    await video.play();
+    statusEl.textContent = 'loading face model…';
+    const fileset = await FilesetResolver.forVisionTasks('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm');
+    landmarker = await FaceLandmarker.createFromOptions(fileset, {
+      baseOptions: {
+        modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task',
+        delegate: 'GPU'
+      },
+      runningMode: 'VIDEO', numFaces: 1
+    });
+    usingMouse = false;
+    video.classList.remove('hidden');
+    statusEl.textContent = 'tracking — move your head';
+  } catch (err) {
+    console.warn(err);
+    const why = err.name === 'NotAllowedError' ? 'camera permission denied'
+      : err.name === 'NotFoundError' ? 'no camera found'
+      : err.name === 'NotReadableError' ? 'camera in use by another app'
+      : err.message || err.name;
+    useMouse(why);
+  }
+}
+
+function useMouse(why) {
+  usingMouse = true;
+  video.classList.add('hidden');
+  statusEl.textContent = why + ' — using mouse (click Camera to retry)';
+}
+
+function track() {
+  if (!landmarker || video.readyState < 2 || video.currentTime === lastVideoTime) return;
+  lastVideoTime = video.currentTime;
+  const res = landmarker.detectForVideo(video, performance.now());
+  const lm = res.faceLandmarks?.[0];
+  if (!lm) { statusEl.textContent = 'no face found'; return; }
+  statusEl.textContent = 'tracking — move your head';
+  const a = lm[33], b = lm[263];                        // outer eye corners
+  const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+  const dist = Math.hypot(a.x - b.x, a.y - b.y);
+  if (refEyeDist === null) { refEyeDist = dist; center = { x: mx, y: my }; }
+  raw = { mx, my, dist };
+}
+
+$('recenter').onclick = () => { if (raw) { refEyeDist = raw.dist; center = { x: raw.mx, y: raw.my }; } };
+$('toggleVid').onclick = () => landmarker ? video.classList.toggle('hidden') : initTracking();
+addEventListener('keydown', e => { if (e.key === 'h' || e.key === 'H') $('hud').classList.toggle('hidden'); });
+addEventListener('mousemove', e => {
+  if (!usingMouse) return;
+  raw = { mx: 1 - e.clientX / innerWidth, my: e.clientY / innerHeight, dist: 1 };
+  refEyeDist = 1; center = { x: 0.5, y: 0.5 };
+});
+
+// ---- Off-axis projection: treat the screen as a window, the eye as the camera ----
+function updateCamera() {
+  const s = parseFloat($('sens').value);
+  if (raw) {
+    // Video is unmirrored: moving to your right moves you left in the frame, hence (center - m).
+    target.x = (center.x - raw.mx) * W * s;
+    target.y = (center.y - raw.my) * H * s;
+    target.z = THREE.MathUtils.clamp(2.2 * refEyeDist / raw.dist, 0.8, 5);
+  }
+  head.x += (target.x - head.x) * 0.25;
+  head.y += (target.y - head.y) * 0.25;
+  head.z += (target.z - head.z) * 0.15;
+
+  const n = 0.05, f = 50, k = n / head.z;
+  camera.position.set(head.x, head.y, head.z);
+  camera.rotation.set(0, 0, 0);
+  camera.updateMatrixWorld();
+  camera.projectionMatrix.makePerspective(
+    (-W / 2 - head.x) * k, (W / 2 - head.x) * k,
+    (H / 2 - head.y) * k, (-H / 2 - head.y) * k, n, f);
+  camera.projectionMatrixInverse.copy(camera.projectionMatrix).invert();
+}
+
+const clock = new THREE.Clock();
+renderer.setAnimationLoop(() => {
+  const dt = clock.getDelta();
+  track();
+  updateCamera();
+  updateLights();
+  if ($('spinObjs').checked)
+    for (const m of floaters.children) {
+      const s = m.userData.spin;
+      m.rotation.x += s.x * dt; m.rotation.y += s.y * dt; m.rotation.z += s.z * dt;
+    }
+  renderer.render(scene, camera);
+});
+
+initTracking();
+</script>
+</body>
+</html>
